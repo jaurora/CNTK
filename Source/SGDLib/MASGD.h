@@ -86,13 +86,13 @@ namespace Microsoft { namespace MSR { namespace CNTK {
             double secondsSinceLastReport = m_Timer.ElapsedSeconds(); 
             m_Timer.Restart(); 
 
-            float totalThroughput = secondsSinceLastReport > 0 ? totalSamplesProcessedSinceLastReport / (float)secondsSinceLastReport / 1000 : 0.0f ; 
+            float totalThroughput = secondsSinceLastReport > 0 ? (float)totalSamplesProcessedSinceLastReport / ((float)secondsSinceLastReport * 1000.0f) : 0.0f ; 
             float throughputPerWorker = totalThroughput / m_numWorkers; 
 
             string prefix = "\t\t(model aggregation stats) %d-th sync: %8.2f seconds since last report (%.2f seconds on comm.); %d samples processed by %d workers (%d by me);\n"
                             "\t\t(model aggregation stats) %d-th sync: totalThroughput = %.2fk samplesPerSecond , throughputPerWorker = %.2fk samplesPerSecond\n";
-            fprintf(stderr, prefix.c_str(), m_numSyncPerformedInCurrentEpoch, secondsSinceLastReport, secondOnCommunication, totalSamplesProcessedSinceLastReport, m_numWorkers, localSamplesProcessedSinceLastReport,
-                                            m_numSyncPerformedInCurrentEpoch, totalThroughput, throughputPerWorker); 
+            fprintf(stderr, prefix.c_str(), (int)m_numSyncPerformedInCurrentEpoch, secondsSinceLastReport, secondOnCommunication, (int)totalSamplesProcessedSinceLastReport, (int)m_numWorkers, (int)localSamplesProcessedSinceLastReport,
+                                            (int)m_numSyncPerformedInCurrentEpoch, totalThroughput, throughputPerWorker); 
 
         }
     };
@@ -102,12 +102,13 @@ namespace Microsoft { namespace MSR { namespace CNTK {
     {
         typedef shared_ptr<ComputationNode<ElemType>> ComputationNodePtr;
      public:
-         IMASGD(const MPIWrapperPtr& pMPI, size_t perfReportFreq)
+         IMASGD(const MPIWrapperPtr& pMPI, size_t perfReportFreq, size_t devID)
              :m_MAworkerStatus(pMPI->NumNodesInUse(), MAWorkerStatus::NOTSTARTED), 
              m_numSyncPerformed(0), 
              m_numWorkers(pMPI->NumNodesInUse()), 
              m_myRank(pMPI->CurrentNodeRank()),
              m_pMPI(pMPI), 
+             m_preferredDeviceID(devID),
              m_perfReporter(pMPI->CurrentNodeRank(), pMPI->NumNodesInUse())
          {
              m_perfReporter.SetReportFrequency(perfReportFreq);
@@ -170,7 +171,19 @@ namespace Microsoft { namespace MSR { namespace CNTK {
              size_t&                                   totalSamplesProcessed,   /* out */
              float&                                    secondsOnCommunication   /* out */) = 0; 
          
-        
+         virtual bool requireCheckPointSaving()
+         {
+             return false;
+         }
+         virtual void SaveToCheckPoint(File& fstream)
+         {
+             return; 
+         }
+         virtual void LoadFromCheckPoint(File& fstream)
+         {
+             return;
+         }
+         
 
     protected:
         bool    somePeersHaveArrivedAtEnd()
@@ -287,6 +300,8 @@ namespace Microsoft { namespace MSR { namespace CNTK {
         size_t                      m_myRank;
         MASGDPerfStats              m_perfReporter;
         MPIWrapperPtr m_pMPI;
+        DEVICEID_TYPE               m_preferredDeviceID;
+        
  };
 
 
@@ -299,9 +314,11 @@ namespace Microsoft { namespace MSR { namespace CNTK {
         using Base::DownCast;
 
     public:
-        BasicModelAveragingSGD(const MPIWrapperPtr& pMPI, size_t reportFreq)
-            :Base(pMPI, reportFreq)
-        {}
+        BasicModelAveragingSGD(const MPIWrapperPtr& pMPI, size_t reportFreq, DEVICEID_TYPE devID)
+            :Base(pMPI, reportFreq, devID)
+        {
+            fprintf(stderr, "Parallel training (%d workers) using BasicModelAveraging\n",(int)m_pMPI->NumNodesInUse());
+        }
 
         
         void ModelAggregationProcessing(
