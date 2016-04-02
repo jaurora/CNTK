@@ -2618,7 +2618,8 @@ SGDParams::SGDParams(const ConfigRecordType& configSGD, size_t sizeofElemType)
             m_useBMUF = configMASGD(L"useBMUF", false) || configMASGD(L"useBM", false); 
             // legacy option : useBMUF
 #ifndef BLOCKWISE_MODEL_UPDATE_FILTERING
-            LogicError("useBM=true but 'block momentum' is not enabled in this version.\n"); 
+            if (m_useBMUF)
+                LogicError("useBM=true but 'block momentum' is not enabled in this version.\n"); 
 #endif 
             m_resetSGDMomentum = configMASGD(L"resetSGDMomentum", false);
             m_blockMomentum = configMASGD(L"blockMomentum", 0.0);
