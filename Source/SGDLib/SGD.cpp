@@ -2606,17 +2606,18 @@ SGDParams::SGDParams(const ConfigRecordType& configSGD, size_t sizeofElemType)
             const ConfigRecordType& configMASGD(configParallelTrain(L"ModelAveragingSGD", ConfigRecordType::Record()));
             m_nFramesBetweenMASync = configMASGD(L"syncFrequencyInFrames", (size_t) 40000);
 
-            m_useBlockMomentum = configMASGD(L"useBlockMomentum", false) || configMASGD(L"useBM", false); 
+            m_useBlockMomentum = configMASGD(L"useBlockMomentum", false); 
 #if 1 // legacy 
             m_useBlockMomentum |= configMASGD(L"useBMUF", false); 
+            m_useBlockMomentum |= configMASGD(L"useBM", false); 
 #endif 
             
 #ifndef BLOCK_MOMENTUM
             if (m_useBlockMomentum)
-                LogicError("useBM=true but 'block momentum' is not enabled in this version.\n"); 
+                InvalidArgument("useBM=true but 'block momentum' is not enabled in this version.\n"); 
 #endif 
             m_resetSGDMomentum = configMASGD(L"resetSGDMomentum", false);
-            m_blockMomentum = configMASGD(L"blockMomentum", 0.0);
+            m_blockMomentum = configMASGD(L"blockMomentum", 0); // NOTE: 0 means not specified by user 
             // automatic decided if user does not specify it  
             if (m_useBlockMomentum && fabs(m_blockMomentum) < 1e-6 && m_mpi->NumNodesInUse() > 1)
             {

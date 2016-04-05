@@ -102,13 +102,13 @@ namespace Microsoft { namespace MSR { namespace CNTK {
     {
         typedef shared_ptr<ComputationNode<ElemType>> ComputationNodePtr;
      public:
-         IMASGD(const MPIWrapperPtr& pMPI, size_t perfReportFreq, size_t devID)
+         IMASGD(const MPIWrapperPtr& pMPI, size_t perfReportFreq, DEVICEID_TYPE devId)
              : m_MAworkerStatus(pMPI->NumNodesInUse(), MAWorkerStatus::NOTSTARTED), 
              m_numSyncPerformed(0), 
              m_numWorkers(pMPI->NumNodesInUse()), 
              m_myRank(pMPI->CurrentNodeRank()),
              m_pMPI(pMPI), 
-             m_deviceId(devID),
+             m_deviceId(devId),
              m_perfReporter(pMPI->CurrentNodeRank(), pMPI->NumNodesInUse())
          {
              m_perfReporter.SetReportFrequency(perfReportFreq);
@@ -295,7 +295,6 @@ namespace Microsoft { namespace MSR { namespace CNTK {
         MASGDPerfStats              m_perfReporter;
         MPIWrapperPtr m_pMPI;
         DEVICEID_TYPE               m_deviceId;
-        
  };
 
 
@@ -321,6 +320,8 @@ namespace Microsoft { namespace MSR { namespace CNTK {
             std::list<Matrix<ElemType>>&              smoothedGradient,        /* in/out */
             size_t&                                   totalSamplesProcessed,   /* out */
             float&                                    secondsOnCommunication   /* out */) override
+            // NOTE: the variable type is determined by the interface in SGD::TrainOneEpoch
+            // even for const std::list<ComputationNodeBasePtr>, the object being pointed to can still be modified 
         {
             //----------------------------------------
             // 1. communicate with other nodes to negotiate  contribution weights
@@ -347,9 +348,9 @@ namespace Microsoft { namespace MSR { namespace CNTK {
                 totalSamplesProcessed = nTotalSamples;
             }
 
-            //========================================
+            //----------------------------------------
             // 2. process for each individual node
-            //========================================
+            //----------------------------------------
             for (auto& pBaseNode : learnableNodes)
             {
                 if (!pBaseNode->IsParameterUpdateRequired())
