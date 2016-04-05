@@ -2619,7 +2619,7 @@ SGDParams::SGDParams(const ConfigRecordType& configSGD, size_t sizeofElemType)
             m_resetSGDMomentum = configMASGD(L"resetSGDMomentum", false);
             m_blockMomentum = configMASGD(L"blockMomentum", 0); // NOTE: 0 means not specified by user 
             // automatic decided if user does not specify it  
-            if (m_useBlockMomentum && fabs(m_blockMomentum) < 1e-6 && m_mpi->NumNodesInUse() > 1)
+            if (m_useBlockMomentum && m_blockMomentum <= 0  && m_mpi->NumNodesInUse() > 1)
             {
                 m_blockMomentum = 1.0 - 1.0 / m_mpi->NumNodesInUse();
             }
