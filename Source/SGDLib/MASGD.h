@@ -103,12 +103,12 @@ namespace Microsoft { namespace MSR { namespace CNTK {
         typedef shared_ptr<ComputationNode<ElemType>> ComputationNodePtr;
      public:
          IMASGD(const MPIWrapperPtr& pMPI, size_t perfReportFreq, size_t devID)
-             :m_MAworkerStatus(pMPI->NumNodesInUse(), MAWorkerStatus::NOTSTARTED), 
+             : m_MAworkerStatus(pMPI->NumNodesInUse(), MAWorkerStatus::NOTSTARTED), 
              m_numSyncPerformed(0), 
              m_numWorkers(pMPI->NumNodesInUse()), 
              m_myRank(pMPI->CurrentNodeRank()),
              m_pMPI(pMPI), 
-             m_preferredDeviceID(devID),
+             m_deviceId(devID),
              m_perfReporter(pMPI->CurrentNodeRank(), pMPI->NumNodesInUse())
          {
              m_perfReporter.SetReportFrequency(perfReportFreq);
@@ -171,18 +171,12 @@ namespace Microsoft { namespace MSR { namespace CNTK {
              size_t&                                   totalSamplesProcessed,   /* out */
              float&                                    secondsOnCommunication   /* out */) = 0; 
          
-         virtual bool requireCheckPointSaving()
+         virtual bool RequiresToSaveToCheckPoint()
          {
              return false;
          }
-         virtual void SaveToCheckPoint(File& fstream)
-         {
-             return; 
-         }
-         virtual void LoadFromCheckPoint(File& fstream)
-         {
-             return;
-         }
+         virtual void SaveToCheckPoint(File& fstream){}
+         virtual void LoadFromCheckPoint(File& fstream){}
          
 
     protected:
@@ -300,7 +294,7 @@ namespace Microsoft { namespace MSR { namespace CNTK {
         size_t                      m_myRank;
         MASGDPerfStats              m_perfReporter;
         MPIWrapperPtr m_pMPI;
-        DEVICEID_TYPE               m_preferredDeviceID;
+        DEVICEID_TYPE               m_deviceId;
         
  };
 
@@ -315,7 +309,7 @@ namespace Microsoft { namespace MSR { namespace CNTK {
 
     public:
         BasicModelAveragingSGD(const MPIWrapperPtr& pMPI, size_t reportFreq, DEVICEID_TYPE devID)
-            :Base(pMPI, reportFreq, devID)
+            : Base(pMPI, reportFreq, devID)
         {
             fprintf(stderr, "Parallel training (%d workers) using BasicModelAveraging\n",(int)m_pMPI->NumNodesInUse());
         }

@@ -11,7 +11,7 @@
 #ifdef QUANTIZED_GRADIENT_AGGREGATION
 #include "AllReduceDistGradAggregator.h"
 #endif
-#ifdef BLOCKWISE_MODEL_UPDATE_FILTERING
+#ifdef BLOCK_MOMENTUM
 #include "BlockMomentumSGD.h"
 #endif 
 #include "SimpleDistGradAggregator.h"
@@ -1876,28 +1876,21 @@ void SGD<ElemType>::InitDistGradAgg(int numEvalNodes, int traceLevel)
 template <class ElemType>
 void SGD<ElemType>::InitModelAggregationHandler(int traceLevel, DEVICEID_TYPE devID)
 {
-    if (GetParallelizationMethod() == ParallelizationMethod::ModelAveragingSGD)
+    if (GetParallelizationMethod() == ParallelizationMethod::ModelAveragingSGD && !m_pMASGDHelper)
     {
-#ifndef BLOCKWISE_MODEL_UPDATE_FILTERING
-        if (!m_pMASGDHelper)
+        if (!m_useBlockMomentum)
         {
             m_pMASGDHelper = make_shared<BasicModelAveragingSGD<ElemType>>(m_mpi, traceLevel, devID);
         }
-#else
-        if (!m_pMASGDHelper)
+        else
         {
-            if (m_useBMUF)
-            {
-                m_pMASGDHelper = make_shared<BlockMomentumSGD<ElemType>>(m_mpi, traceLevel, devID,  m_resetSGDMomentum, m_blockMomentum); 
-            }
-            else
-            {
-                m_pMASGDHelper=make_shared<BasicModelAveragingSGD<ElemType>>(m_mpi, traceLevel, devID);
-            }
-        }
+#ifndef BLOCK_MOMENTUM
+            RuntimeError("Block Momentum is not supported in the main CNTK repo. You need to enable 1bit submodule.");
+#else
+            m_pMASGDHelper = make_shared<BlockMomentumSGD<ElemType>>(m_mpi, traceLevel, devID, m_resetSGDMomentum, m_blockMomentum);
 #endif 
+        }
     }
-    
 }
 // public:
 // UpdateWeightsS - static version of UpdateWeights()
@@ -2083,10 +2076,8 @@ void SGD<ElemType>::SaveCheckPointInfo(const size_t epoch, const size_t totalSam
             fstream.PutMarker(FileMarker::fileMarkerEndSection, L"EGradient");
 
             fstream.PutMarker(FileMarker::fileMarkerEndSection, L"ECKP");
-            if (m_pMASGDHelper && m_pMASGDHelper->requireCheckPointSaving())
-            {
+            if (m_pMASGDHelper && m_pMASGDHelper->RequiresToSaveToCheckPoint())
                 m_pMASGDHelper->SaveToCheckPoint(fstream);
-            }
             // Ensuring that data is written
             fstream.Flush();
         }
@@ -2149,7 +2140,7 @@ bool SGD<ElemType>::LoadCheckPointInfo(const size_t epochNumber,
 
     fstream.GetMarker(FileMarker::fileMarkerEndSection, L"ECKP");
 
-    if (m_pMASGDHelper && m_pMASGDHelper->requireCheckPointSaving())
+    if (m_pMASGDHelper && m_pMASGDHelper->RequiresToSaveToCheckPoint())
     {
         m_pMASGDHelper->LoadFromCheckPoint(fstream);
     }
@@ -2615,16 +2606,19 @@ SGDParams::SGDParams(const ConfigRecordType& configSGD, size_t sizeofElemType)
             const ConfigRecordType& configMASGD(configParallelTrain(L"ModelAveragingSGD", ConfigRecordType::Record()));
             m_nFramesBetweenMASync = configMASGD(L"syncFrequencyInFrames", (size_t) 40000);
 
-            m_useBMUF = configMASGD(L"useBMUF", false) || configMASGD(L"useBM", false); 
-            // legacy option : useBMUF
-#ifndef BLOCKWISE_MODEL_UPDATE_FILTERING
-            if (m_useBMUF)
+            m_useBlockMomentum = configMASGD(L"useBlockMomentum", false) || configMASGD(L"useBM", false); 
+#if 1 // legacy 
+            m_useBlockMomentum |= configMASGD(L"useBMUF", false); 
+#endif 
+            
+#ifndef BLOCK_MOMENTUM
+            if (m_useBlockMomentum)
                 LogicError("useBM=true but 'block momentum' is not enabled in this version.\n"); 
 #endif 
             m_resetSGDMomentum = configMASGD(L"resetSGDMomentum", false);
             m_blockMomentum = configMASGD(L"blockMomentum", 0.0);
             // automatic decided if user does not specify it  
-            if (m_useBMUF && fabs(m_blockMomentum) < 1e-6 && m_mpi->NumNodesInUse() > 1)
+            if (m_useBlockMomentum && fabs(m_blockMomentum) < 1e-6 && m_mpi->NumNodesInUse() > 1)
             {
                 m_blockMomentum = 1.0 - 1.0 / m_mpi->NumNodesInUse();
             }

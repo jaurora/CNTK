@@ -255,7 +255,7 @@ protected:
 
     // Parallel training related with MA
     size_t m_nFramesBetweenMASync;
-    bool   m_useBMUF; 
+    bool   m_useBlockMomentum; 
     bool   m_resetSGDMomentum; 
     double m_blockMomentum; 
 
