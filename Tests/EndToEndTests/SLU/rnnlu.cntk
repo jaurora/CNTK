@@ -3,8 +3,7 @@
 precision="double"
 deviceId = $DeviceId$
 command=LSTM:LSTMTest
-
-precision=double
+traceLevel=1
 
 LSTM=[
     # this is the maximum size for the minibatch, since sequence minibatches are really just a single sequence
@@ -16,23 +15,13 @@ LSTM=[
 #  minibatch size, for example in language model, is the number of input words
 #  e.g., 6, corresponds to having 6 inputs words from one sentence
 #  In the learning process, we split an input sequence into a vector of subsequences of size T_bptt .
+# need to be small since models are updated for each minibatch
     minibatchSize=10
-
-  # need to be small since models are updated for each minibatch
-    traceLevel=1
-    # CPU is -1
-  deviceId=-1
 
     # for each epoch, maximum number of input words is set below
     epochSize=4430000
 
     modelPath=$ExpDir$/cntkdebug.dnn
-
-# uncomment NDLNetworkBuilder to use NDL
-# need to comment out SimpleNetworkBuilder section
-#    NDLNetworkBuilder=[
-#        networkDescription=$NdlDir$/lstmNDL.txt
-#    ]
 
     SimpleNetworkBuilder=[
       trainingCriterion=crossentropywithsoftmax
@@ -318,10 +307,9 @@ LSTMTest=[
   action=write
 
 # correspond to the number of words/characteres to train in a minibatch
+# need to be small since models are updated for each minibatch
     minibatchSize=100
-  # need to be small since models are updated for each minibatch
-    traceLevel=1
-  deviceId=-1
+
   epochSize=4430000
   # which is 886 * 5000
   #recurrentLayer=1
