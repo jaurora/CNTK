@@ -9,6 +9,7 @@
 #include "DataDeserializer.h"
 #include "BlockRandomizer.h"
 #include <numeric>
+#include <random>
 
 using namespace Microsoft::MSR::CNTK;
 
@@ -224,43 +225,41 @@ BOOST_AUTO_TEST_CASE(BlockRandomizerOneEpochWithChunks1)
         actual.begin(), actual.end());
 }
 
-BOOST_AUTO_TEST_CASE(BlockRandomizerOneEpochWithChunks2)
+BOOST_AUTO_TEST_CASE(BlockRandomizerNoCrash)
 {
-    std::vector<float> data(20);
+    const int seed = 42;
+    const int numChunks = 100;
+    const int numSequencesPerChunk = 10;
+    const int windowSize = 18;
+    std::vector<float> data(numChunks * numSequencesPerChunk);
     std::iota(data.begin(), data.end(), 0.0f);
+    std::mt19937 rng(seed);
+    std::uniform_int_distribution<int> distr(1, 10);
 
-    auto mockDeserializer = std::make_shared<MockDeserializer>(10, 2, data);
+    auto mockDeserializer = std::make_shared<MockDeserializer>(numChunks, numSequencesPerChunk, data);
 
-    auto randomizer = std::make_shared<BlockRandomizer>(0, 18, mockDeserializer, BlockRandomizer::DecimationMode::chunk, false);
-
-    EpochConfiguration epochConfiguration;
-    epochConfiguration.m_numberOfWorkers = 1;
-    epochConfiguration.m_workerRank = 0;
-    epochConfiguration.m_minibatchSizeInSamples = 0;
-    epochConfiguration.m_totalEpochSizeInSamples = data.size();
-    epochConfiguration.m_epochIndex = 0;
-    randomizer->StartEpoch(epochConfiguration);
-
-    std::vector<float> expected {
-        16.0, 14.0, 15.0, 8.0, 13.0, 5.0, 17.0, 4.0, 12.0, 9.0,
-        3.0, 18.0, 0.0, 5.0, 2.0, 11.0, 19.0, 7.0, 1.0, 10.0
-    };
-    BOOST_CHECK_EQUAL(data.size(), expected.size());
-    std::vector<float> actual;
-    for (int i = 0; i < data.size() + 1; i++)
+    auto randomizer = std::make_shared<BlockRandomizer>(0, windowSize, mockDeserializer, BlockRandomizer::DecimationMode::chunk, false);
+    for (int t = 0; t < 100; t++)
     {
-        Sequences sequences = randomizer->GetNextSequences(1);
-        BOOST_CHECK_EQUAL(sequences.m_data.size(), 1 - (i / data.size()));
-        if (i < data.size())
+        EpochConfiguration epochConfiguration;
+        epochConfiguration.m_numberOfWorkers = distr(rng);
+        do
         {
-            auto data = reinterpret_cast<DenseSequenceData&>(*sequences.m_data[0][0]);
-            BOOST_CHECK_EQUAL(data.m_numberOfSamples, 1);
-            actual.push_back(*((float*)data.m_data));
+            epochConfiguration.m_workerRank = distr(rng) - 1;
+
+        } while (epochConfiguration.m_numberOfWorkers <= epochConfiguration.m_workerRank);
+        epochConfiguration.m_minibatchSizeInSamples = 0; // don't care
+        epochConfiguration.m_totalEpochSizeInSamples = data.size() / distr(rng); // TODO
+        epochConfiguration.m_epochIndex = distr(rng);
+        randomizer->StartEpoch(epochConfiguration);
+
+        int samplesToGet = 0;
+        for (int i = 0; i < epochConfiguration.m_totalEpochSizeInSamples + 1; i += samplesToGet)
+        {
+            samplesToGet = distr(rng);
+            Sequences sequences = randomizer->GetNextSequences(samplesToGet);
         }
-        BOOST_CHECK_EQUAL(sequences.m_endOfEpoch, (data.size() <= i));
     }
-    BOOST_CHECK_EQUAL_COLLECTIONS(expected.begin(), expected.end(),
-        actual.begin(), actual.end());
 }
 
 BOOST_AUTO_TEST_CASE(BlockRandomizerOneEpochLegacyRandomization)
