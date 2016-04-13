@@ -899,46 +899,118 @@ void GPUSparseMatrix<ElemType>::GetMatrixFromCSCFormat(GPUSPARSE_INDEX_TYPE*& h_
 // dense X sparse = dense
 template <class ElemType>
 void GPUSparseMatrix<ElemType>::MultiplyAndWeightedAdd(ElemType alpha, const GPUMatrix<ElemType>& lhs, const bool transposeA,
-                                                       const GPUSparseMatrix<ElemType>& rhs, const bool transposeB, ElemType beta, GPUMatrix<ElemType>& c)
+	const GPUSparseMatrix<ElemType>& rhs, const bool transposeB, ElemType beta, GPUMatrix<ElemType>& c)
 {
-    if (lhs.GetComputeDeviceId() != rhs.GetComputeDeviceId() || (lhs.GetComputeDeviceId() != c.GetComputeDeviceId()))
-        RuntimeError("GPUSparseMatrix::MultiplyAndWeightedAdd: All matrices must be on the same GPU");
+	if (lhs.GetComputeDeviceId() != rhs.GetComputeDeviceId() || lhs.GetComputeDeviceId() != c.GetComputeDeviceId())
+		RuntimeError("GPUSparseMatrix::MultiplyAndWeightedAdd: All matrices must be on the same GPU");
+	if (lhs.IsEmpty() || rhs.IsEmpty())
+		LogicError("GPUSparseMatrix::MultiplyAndWeightedAdd:  one of the input matrix is empty.");
 
-    if (lhs.IsEmpty() || rhs.IsEmpty())
-        LogicError("GPUSparseMatrix::MultiplyAndWeightedAdd:  one of the input matrix is empty.");
+	int m = transposeA ? (int) lhs.GetNumCols() : (int) lhs.GetNumRows();
+	int k = transposeA ? (int) lhs.GetNumRows() : (int) lhs.GetNumCols();
+	int l = transposeB ? (int) rhs.GetNumCols() : (int) rhs.GetNumRows();
+	int n = transposeB ? (int) rhs.GetNumRows() : (int) rhs.GetNumCols();
 
-    int m = transposeA ? (int) lhs.GetNumCols() : (int) lhs.GetNumRows();
-    int k = transposeA ? (int) lhs.GetNumRows() : (int) lhs.GetNumCols();
-    int l = transposeB ? (int) rhs.GetNumCols() : (int) rhs.GetNumRows();
-    int n = transposeB ? (int) rhs.GetNumRows() : (int) rhs.GetNumCols();
+	assert(m > 0 && k > 0 && l > 0 && n > 0); // converting from size_t to int may cause overflow
+	assert(k == l);
+	if (k != l)
+	{
+		InvalidArgument("GPUSparseMatrix::MultiplyAndWeightedAdd: The inner dimensions of a and b must match.");
+	}
 
-    assert(m > 0 && k > 0 && l > 0 && n > 0); // converting from size_t to int may cause overflow
-    assert(k == l);
-    if (k != l)
-    {
-        InvalidArgument("GPUSparseMatrix::MultiplyAndWeightedAdd: The inner dimensions of a and b must match.");
-    }
+	if (beta == 0)
+		c.Resize(m, n);
+	else
+		c.VerifySize(m, n); // Can't resize if beta != 0
 
-    if (beta == 0)
-        c.Resize(m, n);
-    else
-        c.VerifySize(m, n); // Can't resize if beta != 0
+	c.PrepareDevice();
+	int blocksPerGrid = ((m * n - 1) / GridDim::maxThreadsPerBlock) + 1;
+	if (rhs.m_format == MatrixFormat::matrixFormatSparseCSC)
+	{
+		if (!transposeB) {
+			SyncGuard syncGuard;
 
-    c.PrepareDevice();
-    if (rhs.m_format == MatrixFormat::matrixFormatSparseCSC)
-    {
-        ConvolveAndWeightedAdd(alpha, lhs, transposeA, rhs, transposeB, beta, c, 1, 1, false, false);
-    }
-    else if (rhs.m_format == matrixFormatSparseCSR)
-    {
-        GPUSparseMatrix<ElemType> tempMatrix(rhs.GetComputeDeviceId(), matrixFormatSparseCSC);
-        rhs.ConvertToSparseFormat(matrixFormatSparseCSC, tempMatrix);
-        MultiplyAndWeightedAdd(alpha, lhs, transposeA, tempMatrix, transposeB, beta, c);
-    }
-    else
-    {
-        NOT_IMPLEMENTED;
-    }
+			_dense1DMultSparseAndWeightedAddToDense<ElemType> <<<blocksPerGrid,
+				GridDim::maxThreadsPerBlock, 0, t_stream>>>(
+				m,     // rowDense
+				k,     // colDense
+				n,     // colSparse
+				alpha, 
+				reinterpret_cast<const ElemType*>(lhs.BufferPointer()),     // dense
+				transposeA,
+				reinterpret_cast<const ElemType*>(rhs.BufferPointer()),     // sparse nz values 
+				rhs.RowLocation(),
+				rhs.ColLocation(),
+				beta,
+				reinterpret_cast<ElemType*>(c.BufferPointer())   // dense target						
+				);
+		}
+		else
+		{
+			GPUSparseMatrix<ElemType> rhsTranspose = rhs.Transpose();
+			SyncGuard syncGuard;
+
+			_dense1DMultSparseAndWeightedAddToDense<ElemType> << <blocksPerGrid,
+				GridDim::maxThreadsPerBlock, 0, t_stream >> >(
+				m,     // rowDense
+				k,     // colDense
+				n,     // colSparse
+				alpha,
+				reinterpret_cast<const ElemType*>(lhs.BufferPointer()),     // dense
+				transposeA,
+				reinterpret_cast<const ElemType*>(rhsTranspose.BufferPointer()),     // sparse nz values 
+				rhsTranspose.RowLocation(),
+				rhsTranspose.ColLocation(),
+				beta,
+				reinterpret_cast<ElemType*>(c.BufferPointer())   // dense target						
+				);
+		}
+	}
+	else if (rhs.m_format == MatrixFormat::matrixFormatSparseCSR)
+	{
+		if (!transposeB) {
+			GPUSparseMatrix<ElemType> rhsTranspose = rhs.Transpose();
+			SyncGuard syncGuard;
+
+			_dense1DMultSparseAndWeightedAddToDense<ElemType> << <blocksPerGrid,
+				GridDim::maxThreadsPerBlock, 0, t_stream >> >(
+				m,     // rowDense
+				k,     // colDense
+				n,     // colSparse
+				alpha,
+				reinterpret_cast<const ElemType*>(lhs.BufferPointer()),     // dense
+				transposeA,
+				reinterpret_cast<const ElemType*>(rhsTranspose.BufferPointer()),     // sparse nz values 
+				rhsTranspose.ColLocation(),
+				rhsTranspose.RowLocation(),
+				beta,
+				reinterpret_cast<ElemType*>(c.BufferPointer())   // dense target						
+				);
+		}
+		else
+		{
+			SyncGuard syncGuard;
+
+			_dense1DMultSparseAndWeightedAddToDense<ElemType> << <blocksPerGrid,
+				GridDim::maxThreadsPerBlock, 0, t_stream >> >(
+				m,     // rowDense
+				k,     // colDense
+				n,     // colSparse
+				alpha,
+				reinterpret_cast<const ElemType*>(lhs.BufferPointer()),     // dense
+				transposeA,
+				reinterpret_cast<const ElemType*>(rhs.BufferPointer()),     // sparse nz values 
+				rhs.ColLocation(),
+				rhs.RowLocation(),
+				beta,
+				reinterpret_cast<ElemType*>(c.BufferPointer())   // dense target						
+				);
+		}
+	}
+	else
+	{
+		NOT_IMPLEMENTED;
+	}
 }
 
 // dense X sparse = dense
@@ -1395,34 +1467,34 @@ void GPUSparseMatrix<ElemType>::MultiplyAndWeightedAdd(ElemType alpha, const GPU
     if (a.GetComputeDeviceId() != b.GetComputeDeviceId() || (b.GetComputeDeviceId() != a.GetComputeDeviceId()))
         RuntimeError("MultiplyAndWeightedAdd: All matrices must be on the same GPU");
 
-    a.PrepareDevice();
-    cusparseHandle_t cusparseHandle = 0;
-    CUSPARSE_CALL(cusparseCreate(&cusparseHandle));
-    cusparseMatDescr_t descr = 0;
-    CUSPARSE_CALL(cusparseCreateMatDescr(&descr));
-    cusparseSetMatType(descr, CUSPARSE_MATRIX_TYPE_GENERAL);
-    cusparseSetMatIndexBase(descr, CUSPARSE_INDEX_BASE_ZERO);
-    cusparseOperation_t oper = transposeA ? CUSPARSE_OPERATION_TRANSPOSE : CUSPARSE_OPERATION_NON_TRANSPOSE;
+	a.PrepareDevice();
+	cusparseHandle_t cusparseHandle = 0;
+	CUSPARSE_CALL(cusparseCreate(&cusparseHandle));
+	cusparseMatDescr_t descr = 0;
+	CUSPARSE_CALL(cusparseCreateMatDescr(&descr));
+	cusparseSetMatType(descr, CUSPARSE_MATRIX_TYPE_GENERAL);
+	cusparseSetMatIndexBase(descr, CUSPARSE_INDEX_BASE_ZERO);
+	cusparseOperation_t oper = transposeA ? CUSPARSE_OPERATION_TRANSPOSE : CUSPARSE_OPERATION_NON_TRANSPOSE;
 
-    int m = (int) a.GetNumRows();
-    int n = (int) b.GetNumCols();
-    assert(n == (int) c.GetNumCols());
-    int k = (int) a.GetNumCols();
+	int m = (int) a.GetNumRows();
+	int n = (int) b.GetNumCols();
+	assert(n == (int) c.GetNumCols());
+	int k = (int) a.GetNumCols();
 
-    SyncGuard syncGuard;
-    if (sizeof(ElemType) == sizeof(float))
-    {
-        CUSPARSE_CALL(cusparseScsrmm(cusparseHandle, oper, m, n, k, (int) a.GetNumElemAllocated(), reinterpret_cast<float*>(&alpha), descr, reinterpret_cast<const float*>(a.BufferPointer()),
-                                     a.RowLocation(), a.ColLocation(), reinterpret_cast<float*>(b.BufferPointer()),
-                                     (int) b.GetNumRows(), reinterpret_cast<float*>(&beta), reinterpret_cast<float*>(c.BufferPointer()), (int) c.GetNumRows()));
-    }
-    else
-    {
-        CUSPARSE_CALL(cusparseDcsrmm(cusparseHandle, oper, m, n, k, (int) a.GetNumElemAllocated(), reinterpret_cast<double*>(&alpha), descr, reinterpret_cast<const double*>(a.BufferPointer()),
-                                     a.RowLocation(), a.ColLocation(), reinterpret_cast<double*>(b.BufferPointer()),
-                                     (int) b.GetNumRows(), reinterpret_cast<double*>(&beta), reinterpret_cast<double*>(c.BufferPointer()), (int) c.GetNumRows()));
-    }
-    CUSPARSE_CALL(cusparseDestroy(cusparseHandle));
+	SyncGuard syncGuard;
+	if (sizeof(ElemType) == sizeof(float))
+	{
+		CUSPARSE_CALL(cusparseScsrmm(cusparseHandle, oper, m, n, k, (int) a.GetNumElemAllocated(), reinterpret_cast<float*>(&alpha), descr, reinterpret_cast<const float*>(a.BufferPointer()),
+			a.RowLocation(), a.ColLocation(), reinterpret_cast<float*>(b.BufferPointer()),
+			(int) b.GetNumRows(), reinterpret_cast<float*>(&beta), reinterpret_cast<float*>(c.BufferPointer()), (int) c.GetNumRows()));
+	}
+	else
+	{
+		CUSPARSE_CALL(cusparseDcsrmm(cusparseHandle, oper, m, n, k, (int) a.GetNumElemAllocated(), reinterpret_cast<double*>(&alpha), descr, reinterpret_cast<const double*>(a.BufferPointer()),
+			a.RowLocation(), a.ColLocation(), reinterpret_cast<double*>(b.BufferPointer()),
+			(int) b.GetNumRows(), reinterpret_cast<double*>(&beta), reinterpret_cast<double*>(c.BufferPointer()), (int) c.GetNumRows()));
+	}
+	CUSPARSE_CALL(cusparseDestroy(cusparseHandle));
 }
 
 template <class ElemType>

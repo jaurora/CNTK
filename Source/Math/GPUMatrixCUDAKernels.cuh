@@ -2815,6 +2815,44 @@ __global__ void _shiftColCSCIndexFromSliceViewToAbsolute(
         colCSCIndex[cols] = nz;
 }
 
+//  c = alpha * op(a) * op(b) + beta*c
+template <class ElemType>
+__global__ void _dense1DMultSparseAndWeightedAddToDense(
+	const int m,                 // rowDense
+	const int k,                 // colDense
+	const int n,                 // colSparse
+	const ElemType alpha,
+	const ElemType* a,           // dense
+	const bool transposeA,
+	const ElemType* bnzValues,   // sparse nz values
+	const GPUSPARSE_INDEX_TYPE* rowIndex,
+	const GPUSPARSE_INDEX_TYPE* colCSCIndex,
+	const ElemType beta,
+	ElemType* c                  // dense target
+	)
+
+{
+	CUDA_LONG id = blockDim.x * blockIdx.x + threadIdx.x;
+	if (id >= m * n) return;
+
+	int colInc = id / m;         // column major storage
+	int rowInc = id % m;
+
+	int start = colCSCIndex[colInc];
+	int end = colCSCIndex[colInc + 1];
+
+	ElemType multSum = 0;
+	for (int j = start; j < end; j++)
+	{
+		if (!transposeA)
+			multSum += bnzValues[j] * a[IDX2C(rowInc, rowIndex[j], m)];
+		else
+			multSum += bnzValues[j] * a[IDX2C(rowIndex[j], rowInc, k)];
+	}
+
+	c[IDX2C(rowInc, colInc, m)] = alpha * multSum + beta * c[IDX2C(rowInc, colInc, m)];
+}
+
 //c = alpha * op(a) * op(b) + beta*c
 // TODO: This function can be further improved by loading the kernel in shared memory
 template <class ElemType>
